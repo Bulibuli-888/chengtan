@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 
 import com.hmdp.dto.Result;
 import com.hmdp.entity.ShopType;
@@ -15,9 +18,8 @@ import java.util.List;
  * <p>
  * 前端控制器
  * </p>
- *
- * @author 虎哥
  */
+@Api(tags = "店铺分类模块")
 @RestController
 @RequestMapping("/shop-type")
 public class ShopTypeController {

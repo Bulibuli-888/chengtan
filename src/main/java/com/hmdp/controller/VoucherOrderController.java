@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 
 import com.hmdp.dto.Result;
 import com.hmdp.service.IVoucherOrderService;
@@ -15,9 +18,8 @@ import javax.annotation.Resource;
  * <p>
  *  前端控制器
  * </p>
- *
- * @author 虎哥
  */
+@Api(tags = "秒杀订单模块")
 @RestController
 @RequestMapping("/voucher-order")
 public class VoucherOrderController {
@@ -26,7 +28,16 @@ public class VoucherOrderController {
     private IVoucherOrderService voucherOrderService;
 
     @PostMapping("seckill/{id}")
+    @ApiOperation("秒杀优惠券下单")
+
     public Result seckillVoucher(@PathVariable("id") Long voucherId) {
         return voucherOrderService.seckillVoucher(voucherId);
+    }
+
+    @PostMapping("pay/{orderId}")
+    @ApiOperation("模拟支付订单")
+
+    public Result pay(@PathVariable("orderId") Long orderId) {
+        return voucherOrderService.pay(orderId);
     }
 }

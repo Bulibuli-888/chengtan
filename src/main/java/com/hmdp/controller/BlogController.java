@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
@@ -17,9 +20,8 @@ import java.util.List;
  * <p>
  * 前端控制器
  * </p>
- *
- * @author 虎哥
  */
+@Api(tags = "博客模块")
 @RestController
 @RequestMapping("/blog")
 public class BlogController {
@@ -28,16 +30,22 @@ public class BlogController {
     private IBlogService blogService;
 
     @PostMapping
+    @ApiOperation("发布博客笔记")
+
     public Result saveBlog(@RequestBody Blog blog) {
         return blogService.saveBlog(blog);
     }
 
     @PutMapping("/like/{id}")
+    @ApiOperation("点赞博客")
+
     public Result likeBlog(@PathVariable("id") Long id) {
         return blogService.likeBlog(id);
     }
 
     @GetMapping("/of/me")
+    @ApiOperation("查询我的博客")
+
     public Result queryMyBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
         // 获取登录用户
         UserDTO user = UserHolder.getUser();
@@ -50,11 +58,15 @@ public class BlogController {
     }
 
     @GetMapping("/hot")
+    @ApiOperation("查询热门博客")
+
     public Result queryHotBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
         return blogService.queryHotBlog(current);
     }
 
     @GetMapping("/{id}")
+    @ApiOperation("根据ID查询博客详情")
+
     public Result queryBlogById(@PathVariable("id") Long id) {
         return blogService.queryBlogById(id);
     }
@@ -77,6 +89,8 @@ public class BlogController {
     }
 
     @GetMapping("/of/follow")
+    @ApiOperation("查询关注用户的博客")
+
     public Result queryBlogOfFollow(
             @RequestParam("lastId") Long max, @RequestParam(value = "offset", defaultValue = "0") Integer offset){
         return blogService.queryBlogOfFollow(max, offset);

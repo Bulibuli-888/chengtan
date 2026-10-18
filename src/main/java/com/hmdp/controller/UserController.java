@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 
 import cn.hutool.core.bean.BeanUtil;
 import com.hmdp.dto.LoginFormDTO;
@@ -15,15 +18,17 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
+import javax.servlet.http.HttpServletRequest;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import static com.hmdp.utils.RedisConstants.LOGIN_USER_KEY;
 
 /**
  * <p>
  * 前端控制器
  * </p>
- *
- * @author 虎哥
  */
 @Slf4j
+@Api(tags = "用户模块")
 @RestController
 @RequestMapping("/user")
 public class UserController {
@@ -33,11 +38,15 @@ public class UserController {
 
     @Resource
     private IUserInfoService userInfoService;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
 
     /**
      * 发送手机验证码
      */
     @PostMapping("code")
+    @ApiOperation("发送手机验证码")
+
     public Result sendCode(@RequestParam("phone") String phone, HttpSession session) {
         // 发送短信验证码并保存验证码
         return userService.sendCode(phone, session);
@@ -48,6 +57,8 @@ public class UserController {
      * @param loginForm 登录参数，包含手机号、验证码；或者手机号、密码
      */
     @PostMapping("/login")
+    @ApiOperation("用户登录")
+
     public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
         // 实现登录功能
         return userService.login(loginForm, session);
@@ -58,12 +69,23 @@ public class UserController {
      * @return 无
      */
     @PostMapping("/logout")
-    public Result logout(){
-        // TODO 实现登出功能
-        return Result.fail("功能未完成");
+    @ApiOperation("退出登录")
+
+    public Result logout(HttpServletRequest request){
+        // 1.获取请求头中的token
+        String token = request.getHeader("authorization");
+        if (token != null && !token.isEmpty()) {
+            // 2.删除Redis中的token
+            stringRedisTemplate.delete(LOGIN_USER_KEY + token);
+        }
+        // 3.移除ThreadLocal中的用户
+        UserHolder.removeUser();
+        return Result.ok();
     }
 
     @GetMapping("/me")
+    @ApiOperation("获取当前登录用户")
+
     public Result me(){
         // 获取当前登录的用户并返回
         UserDTO user = UserHolder.getUser();
@@ -71,6 +93,8 @@ public class UserController {
     }
 
     @GetMapping("/info/{id}")
+    @ApiOperation("查询用户详情")
+
     public Result info(@PathVariable("id") Long userId){
         // 查询详情
         UserInfo info = userInfoService.getById(userId);
@@ -85,6 +109,8 @@ public class UserController {
     }
 
     @GetMapping("/{id}")
+    @ApiOperation("根据ID查询用户")
+
     public Result queryUserById(@PathVariable("id") Long userId){
         // 查询详情
         User user = userService.getById(userId);
@@ -97,11 +123,15 @@ public class UserController {
     }
 
     @PostMapping("/sign")
+    @ApiOperation("每日签到")
+
     public Result sign(){
         return userService.sign();
     }
 
     @GetMapping("/sign/count")
+    @ApiOperation("获取连续签到天数")
+
     public Result signCount(){
         return userService.signCount();
     }

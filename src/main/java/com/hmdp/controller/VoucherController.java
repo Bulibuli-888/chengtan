@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Voucher;
@@ -12,9 +15,8 @@ import javax.annotation.Resource;
  * <p>
  *  前端控制器
  * </p>
- *
- * @author 虎哥
  */
+@Api(tags = "优惠券模块")
 @RestController
 @RequestMapping("/voucher")
 public class VoucherController {

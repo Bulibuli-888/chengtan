@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.StrUtil;
 import com.hmdp.dto.Result;
@@ -13,11 +16,14 @@ import java.io.IOException;
 import java.util.UUID;
 
 @Slf4j
+@Api(tags = "文件上传模块")
 @RestController
 @RequestMapping("upload")
 public class UploadController {
 
     @PostMapping("blog")
+    @ApiOperation("上传图片")
+
     public Result uploadImage(@RequestParam("file") MultipartFile image) {
         try {
             // 获取原始文件名称

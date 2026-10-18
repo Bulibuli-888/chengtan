@@ -1,5 +1,8 @@
 package com.hmdp.controller;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -15,9 +18,8 @@ import javax.annotation.Resource;
  * <p>
  * 前端控制器
  * </p>
- *
- * @author 虎哥
  */
+@Api(tags = "店铺模块")
 @RestController
 @RequestMapping("/shop")
 public class ShopController {
@@ -31,6 +33,8 @@ public class ShopController {
      * @return 商铺详情数据
      */
     @GetMapping("/{id}")
+    @ApiOperation("根据ID查询店铺详情")
+
     public Result queryShopById(@PathVariable("id") Long id) {
         return shopService.queryById(id);
     }
@@ -66,6 +70,8 @@ public class ShopController {
      * @return 商铺列表
      */
     @GetMapping("/of/type")
+    @ApiOperation("根据分类查询店铺列表")
+
     public Result queryShopByType(
             @RequestParam("typeId") Integer typeId,
             @RequestParam(value = "current", defaultValue = "1") Integer current,

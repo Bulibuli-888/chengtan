@@ -19,8 +19,16 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import javax.annotation.Resource;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import org.springframework.data.redis.core.ZSetOperations;
+import static com.hmdp.utils.RedisConstants.ORDER_DELAY_KEY;
+import static com.hmdp.utils.RedisConstants.ORDER_TIMEOUT_TTL;
+import static com.hmdp.utils.RedisConstants.SECKILL_STOCK_KEY;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -31,9 +39,6 @@ import java.util.concurrent.Executors;
  * <p>
  * 服务实现类
  * </p>
- *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Slf4j
 @Service
@@ -59,17 +64,27 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
 
     private static final ExecutorService SECKILL_ORDER_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final ExecutorService ORDER_TIMEOUT_EXECUTOR = Executors.newSingleThreadExecutor();
 
+    private volatile boolean running = true;
     @PostConstruct
     private void init() {
         SECKILL_ORDER_EXECUTOR.submit(new VoucherOrderHandler());
+        ORDER_TIMEOUT_EXECUTOR.submit(new OrderTimeoutHandler());
+    }
+
+    @PreDestroy
+    private void destroy() {
+        running = false;
+        SECKILL_ORDER_EXECUTOR.shutdownNow();
+        ORDER_TIMEOUT_EXECUTOR.shutdownNow();
     }
 
     private class VoucherOrderHandler implements Runnable {
 
         @Override
         public void run() {
-            while (true) {
+            while (running) {
                 try {
                     // 1.获取消息队列中的订单信息 XREADGROUP GROUP g1 c1 COUNT 1 BLOCK 2000 STREAMS s1 >
                     List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
@@ -98,7 +113,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         private void handlePendingList() {
-            while (true) {
+            while (running) {
                 try {
                     // 1.获取pending-list中的订单信息 XREADGROUP GROUP g1 c1 COUNT 1 BLOCK 2000 STREAMS s1 0
                     List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
@@ -131,7 +146,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         @Override
         public void run() {
-            while (true){
+            while (running){
                 try {
                     // 1.获取队列中的订单信息
                     VoucherOrder voucherOrder = orderTasks.take();
@@ -160,7 +175,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         try {
             // 5.1.查询订单
-            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).ne("status", 4).count();
             // 5.2.判断是否存在
             if (count > 0) {
                 // 用户已经购买过了
@@ -181,6 +196,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
             // 7.创建订单
             save(voucherOrder);
+            // 8.加入延迟队列，15分钟未支付自动取消
+            stringRedisTemplate.opsForZSet().add(ORDER_DELAY_KEY, voucherOrder.getId().toString(), System.currentTimeMillis() + ORDER_TIMEOUT_TTL);
         } finally {
             // 释放锁
             redisLock.unlock();
@@ -204,7 +221,81 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
         }
         // 3.返回订单id
-        return Result.ok(orderId);
+        return Result.ok(String.valueOf(orderId));
+    }
+
+    @Override
+    public Result pay(Long orderId) {
+        Long userId = UserHolder.getUser().getId();
+        VoucherOrder order = getById(orderId);
+        if (order == null) {
+            return Result.fail("订单不存在");
+        }
+        if (!order.getUserId().equals(userId)) {
+            return Result.fail("无权操作该订单");
+        }
+        if (order.getStatus() != 1) {
+            return Result.fail("订单状态异常，无法支付");
+        }
+        boolean success = update()
+                .set("status", 2)
+                .set("pay_time", LocalDateTime.now())
+                .set("pay_type", 1)
+                .set("update_time", LocalDateTime.now())
+                .eq("id", orderId)
+                .eq("status", 1)
+                .update();
+        if (!success) {
+            return Result.fail("订单状态异常，无法支付");
+        }
+        // 7.支付成功，从延迟队列移除
+        stringRedisTemplate.opsForZSet().remove(ORDER_DELAY_KEY, String.valueOf(orderId));
+        return Result.ok();
+    }
+
+    private class OrderTimeoutHandler implements Runnable {
+        @Override
+        public void run() {
+            while (running) {
+                try {
+                    Set<ZSetOperations.TypedTuple<String>> tuples = stringRedisTemplate.opsForZSet()
+                            .rangeByScoreWithScores(ORDER_DELAY_KEY, 0, System.currentTimeMillis(), 0, 1);
+                    if (tuples == null || tuples.isEmpty()) {
+                        Thread.sleep(5000);
+                        continue;
+                    }
+                    String orderIdStr = tuples.iterator().next().getValue();
+                    Long orderId = Long.valueOf(orderIdStr);
+                    cancelTimeoutOrder(orderId);
+                    stringRedisTemplate.opsForZSet().remove(ORDER_DELAY_KEY, orderIdStr);
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    log.error("处理超时订单异常", e);
+                    try { Thread.sleep(5000); } catch (InterruptedException ie) { break; }
+                }
+            }
+        }
+    }
+
+    private void cancelTimeoutOrder(Long orderId) {
+        VoucherOrder order = getById(orderId);
+        if (order == null) return;
+        if (order.getStatus() != 1) return;
+        boolean success = update()
+                .set("status", 4)
+                .set("update_time", LocalDateTime.now())
+                .eq("id", orderId)
+                .eq("status", 1)
+                .update();
+        if (!success) return;
+        seckillVoucherService.update()
+                .setSql("stock = stock + 1")
+                .eq("voucher_id", order.getVoucherId())
+                .update();
+        stringRedisTemplate.opsForValue().increment(SECKILL_STOCK_KEY + order.getVoucherId());
+        stringRedisTemplate.opsForSet().remove("seckill:order:" + order.getVoucherId(), order.getUserId().toString());
+        log.info("订单超时自动取消，orderId={}", orderId);
     }
 
     /*@Override
@@ -235,7 +326,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         orderTasks.add(voucherOrder);
 
         // 3.返回订单id
-        return Result.ok(orderId);
+        return Result.ok(String.valueOf(orderId));
     }*/
     /*@Override
     public Result seckillVoucher(Long voucherId) {
@@ -279,7 +370,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         try {
             // 5.1.查询订单
-            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).ne("status", 4).count();
             // 5.2.判断是否存在
             if (count > 0) {
                 // 用户已经购买过了
@@ -308,7 +399,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             save(voucherOrder);
 
             // 7.返回订单id
-            return Result.ok(orderId);
+            return Result.ok(String.valueOf(orderId));
         } finally {
             // 释放锁
             redisLock.unlock();
@@ -332,7 +423,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         try {
             // 5.1.查询订单
-            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).ne("status", 4).count();
             // 5.2.判断是否存在
             if (count > 0) {
                 // 用户已经购买过了
@@ -361,7 +452,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             save(voucherOrder);
 
             // 7.返回订单id
-            return Result.ok(orderId);
+            return Result.ok(String.valueOf(orderId));
         } finally {
             // 释放锁
             redisLock.unlock();
@@ -376,7 +467,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         synchronized (userId.toString().intern()) {
             // 5.1.查询订单
-            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+            int count = query().eq("user_id", userId).eq("voucher_id", voucherId).ne("status", 4).count();
             // 5.2.判断是否存在
             if (count > 0) {
                 // 用户已经购买过了
@@ -405,7 +496,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             save(voucherOrder);
 
             // 7.返回订单id
-            return Result.ok(orderId);
+            return Result.ok(String.valueOf(orderId));
         }
     }*/
 }
