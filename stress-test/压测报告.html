@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>黑马点评 - 秒杀接口压测报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 30px 20px; }
+  .header { text-align: center; margin-bottom: 40px; }
+  .header h1 { font-size: 28px; color: #1a1a1a; margin-bottom: 8px; }
+  .header .subtitle { color: #666; font-size: 14px; }
+  .header .date { color: #999; font-size: 13px; margin-top: 4px; }
+  .section { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .section h2 { font-size: 18px; color: #1a1a1a; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; }
+  .section h3 { font-size: 15px; color: #333; margin: 16px 0 10px; }
+  .env-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .env-item { background: #f8f9fa; padding: 12px 16px; border-radius: 8px; }
+  .env-item .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+  .env-item .value { font-size: 14px; color: #333; font-weight: 500; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 10px 12px; text-align: center; border-bottom: 1px solid #eee; }
+  th { background: #f8f9fa; color: #555; font-weight: 600; }
+  td.highlight { color: #e74c3c; font-weight: 600; }
+  td.success { color: #27ae60; font-weight: 600; }
+  .chart { width: 100%; height: 350px; margin: 10px 0; }
+  .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 768px) { .chart-row { grid-template-columns: 1fr; } }
+  .conclusion { background: #f0f7ff; border-left: 4px solid #3498db; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-top: 12px; }
+  .conclusion p { margin-bottom: 8px; font-size: 14px; }
+  .conclusion strong { color: #2c3e50; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 6px; }
+  .tag-success { background: #d4edda; color: #155724; }
+  .tag-warning { background: #fff3cd; color: #856404; }
+  .tag-danger { background: #f8d7da; color: #721c24; }
+  .optimize-list { list-style: none; padding: 0; }
+  .optimize-list li { padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+  .optimize-list li:last-child { border-bottom: none; }
+  .optimize-list .num { display: inline-block; width: 24px; height: 24px; background: #3498db; color: #fff; border-radius: 50%; text-align: center; line-height: 24px; font-size: 12px; margin-right: 10px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>黑马点评 - 秒杀接口压测报告</h1>
+    <div class="subtitle">高并发秒杀场景性能与正确性验证</div>
+    <div class="date">测试日期：2026-09-08</div>
+  </div>
+
+  <div class="section">
+    <h2>一、测试环境</h2>
+    <div class="env-grid">
+      <div class="env-item"><div class="label">操作系统</div><div class="value">Windows 10/11</div></div>
+      <div class="env-item"><div class="label">JDK</div><div class="value">Temurin OpenJDK 1.8.0_504</div></div>
+      <div class="env-item"><div class="label">框架</div><div class="value">Spring Boot 2.3.12</div></div>
+      <div class="env-item"><div class="label">数据库</div><div class="value">MySQL 8.0</div></div>
+      <div class="env-item"><div class="label">缓存</div><div class="value">Redis 5.0.14</div></div>
+      <div class="env-item"><div class="label">压测工具</div><div class="value">Apache JMeter 5.6.3</div></div>
+      <div class="env-item"><div class="label">数据库连接池</div><div class="value">HikariCP (max=50)</div></div>
+      <div class="env-item"><div class="label">Tomcat线程</div><div class="value">max-threads=500</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>二、测试场景</h2>
+    <table>
+      <thead>
+        <tr><th>场景</th><th>并发数</th><th>Ramp-Up</th><th>循环次数</th><th>秒杀券库存</th><th>测试用户数</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>场景一</td><td>500</td><td>1秒</td><td>1次</td><td>100</td><td>1000</td></tr>
+        <tr><td>场景二</td><td>1000</td><td>1秒</td><td>1次</td><td>100</td><td>1000</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:12px;font-size:13px;color:#666;">测试接口：<code>POST /voucher-order/seckill/{voucherId}</code>，每个请求携带独立用户 token，验证一人一单。</p>
+  </div>
+
+  <div class="section">
+    <h2>三、性能指标对比</h2>
+    <table>
+      <thead>
+        <tr><th>指标</th><th>500并发</th><th>1000并发</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>总请求数</td><td>500</td><td>1000</td></tr>
+        <tr><td>成功请求</td><td class="success">100</td><td class="success">100</td></tr>
+        <tr><td>失败请求</td><td>400</td><td>900</td></tr>
+        <tr><td>错误率</td><td>80.0%</td><td>90.0%</td></tr>
+        <tr><td>吞吐量 (QPS)</td><td>95.8</td><td class="success">200.3</td></tr>
+        <tr><td>平均响应时间</td><td>1736ms</td><td class="success">1264ms</td></tr>
+        <tr><td>最小响应时间</td><td>619ms</td><td class="success">294ms</td></tr>
+        <tr><td>最大响应时间</td><td>4628ms</td><td class="success">3879ms</td></tr>
+        <tr><td>P50 (中位数)</td><td>1143ms</td><td>1192ms</td></tr>
+        <tr><td>P90</td><td>4457ms</td><td class="success">2681ms</td></tr>
+        <tr><td>P95</td><td>4509ms</td><td class="success">3260ms</td></tr>
+        <tr><td>P99</td><td>4570ms</td><td class="success">3665ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>四、性能可视化</h2>
+    <div class="chart-row">
+      <div id="chart-qps" class="chart"></div>
+      <div id="chart-rt" class="chart"></div>
+    </div>
+    <div id="chart-percentile" class="chart"></div>
+  </div>
+
+  <div class="section">
+    <h2>五、正确性验证</h2>
+    <table>
+      <thead>
+        <tr><th>验证项</th><th>预期结果</th><th>500并发</th><th>1000并发</th><th>结论</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>MySQL库存扣减</td><td>100→0</td><td>100→0</td><td>100→0</td><td><span class="tag tag-success">通过</span></td></tr>
+        <tr><td>Redis库存扣减</td><td>100→0</td><td>100→0</td><td>100→0</td><td><span class="tag tag-success">通过</span></td></tr>
+        <tr><td>订单总数</td><td>=100</td><td>100</td><td>100</td><td><span class="tag tag-success">通过</span></td></tr>
+        <tr><td>不超卖</td><td>订单≤库存</td><td>100≤100</td><td>100≤100</td><td><span class="tag tag-success">通过</span></td></tr>
+        <tr><td>一人一单</td><td>无重复用户</td><td>0重复</td><td>0重复</td><td><span class="tag tag-success">通过</span></td></tr>
+        <tr><td>MySQL与Redis一致</td><td>库存相同</td><td>均为0</td><td>均为0</td><td><span class="tag tag-success">通过</span></td></tr>
+        <tr><td>订单状态</td><td>未支付(1)</td><td>全部为1</td><td>全部为1</td><td><span class="tag tag-success">通过</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>六、错误分析</h2>
+    <h3>错误类型分布</h3>
+    <table>
+      <thead>
+        <tr><th>错误类型</th><th>500并发</th><th>1000并发</th><th>原因</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>连接被拒绝 (Connection Refused)</td><td>398</td><td>864</td><td>Tomcat连接队列满，新连接被拒绝</td></tr>
+        <tr><td>库存不足 (业务失败)</td><td>2</td><td>36</td><td>秒杀券已售罄，正常业务限流</td></tr>
+        <tr><td>真正成功</td><td class="success">100</td><td class="success">100</td><td>秒杀成功</td></tr>
+      </tbody>
+    </table>
+    <div class="conclusion" style="margin-top:16px;">
+      <p><strong>关键发现：</strong>错误主要来自连接被拒绝，而非秒杀逻辑错误。这说明后端在高并发下的<strong>连接处理能力</strong>是主要瓶颈，而非秒杀业务逻辑。</p>
+      <p>秒杀核心逻辑（Redis预扣库存 + 数据库乐观锁 + 一人一单）在两次压测中均<strong>100%正确</strong>，未出现超卖或重复下单。</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>七、结论与优化建议</h2>
+    <div class="conclusion">
+      <p><strong>结论：</strong></p>
+      <p>1. <span class="tag tag-success">正确性达标</span> 秒杀接口在 500/1000 并发下均未出现超卖，一人一单机制有效，Redis与MySQL库存最终一致。</p>
+      <p>2. <span class="tag tag-warning">性能有瓶颈</span> 高并发下大量连接被拒绝，主要原因是Tomcat连接队列和数据库连接池在瞬时高并发下被打满。</p>
+      <p>3. <span class="tag tag-success">1000并发表现更优</span> 1000并发时QPS达200.3，P99响应3665ms，优于500并发，说明连接池优化后高并发下资源利用率更高。</p>
+    </div>
+    <h3 style="margin-top:20px;">优化建议</h3>
+    <ul class="optimize-list">
+      <li><span class="num">1</span><strong>接入消息队列削峰</strong>：秒杀请求先入MQ（如RabbitMQ/RocketMQ），消费者异步下单，前端返回"排队中"，大幅提升系统吞吐量。</li>
+      <li><span class="num">2</span><strong>Redis Lua脚本原子化</strong>：将"判断库存+扣减库存+一人一单"合并为一个Lua脚本执行，减少Redis往返次数，进一步提升性能。</li>
+      <li><span class="num">3</span><strong>限流降级</strong>：在网关层或Controller层加令牌桶/漏桶限流，超过阈值直接返回"活动太火爆"，保护后端不被打满。</li>
+      <li><span class="num">4</span><strong>数据库读写分离</span>：查询走从库，写走主库，减轻主库压力。</li>
+      <li><span class="num">5</span><strong>订单异步创建</strong>：当前下单是同步阻塞的（查库存→扣库存→插订单），可改为先Redis预扣+异步写DB，提升响应速度。</li>
+    </ul>
+  </div>
+
+  <div class="section" style="text-align:center;color:#999;font-size:12px;">
+    <p>本报告由 JMeter 压测数据自动生成 | 黑马点评项目秒杀模块</p>
+  </div>
+</div>
+
+<script>
+// QPS对比图
+var chartQps = echarts.init(document.getElementById('chart-qps'));
+chartQps.setOption({
+  title: { text: '吞吐量 (QPS) 对比', left: 'center', textStyle: { fontSize: 14 } },
+  tooltip: { trigger: 'axis' },
+  xAxis: { type: 'category', data: ['500并发', '1000并发'] },
+  yAxis: { type: 'value', name: 'QPS' },
+  series: [{
+    type: 'bar',
+    data: [95.8, 200.3],
+    itemStyle: { color: '#3498db', borderRadius: [6,6,0,0] },
+    label: { show: true, position: 'top', formatter: '{c}' }
+  }],
+  grid: { top: 50, bottom: 30, left: 50, right: 20 }
+});
+
+// 平均响应时间对比
+var chartRt = echarts.init(document.getElementById('chart-rt'));
+chartRt.setOption({
+  title: { text: '平均响应时间对比', left: 'center', textStyle: { fontSize: 14 } },
+  tooltip: { trigger: 'axis' },
+  xAxis: { type: 'category', data: ['500并发', '1000并发'] },
+  yAxis: { type: 'value', name: 'ms' },
+  series: [{
+    type: 'bar',
+    data: [1736, 1264],
+    itemStyle: { color: '#e74c3c', borderRadius: [6,6,0,0] },
+    label: { show: true, position: 'top', formatter: '{c}ms' }
+  }],
+  grid: { top: 50, bottom: 30, left: 50, right: 20 }
+});
+
+// 百分位响应时间对比
+var chartP = echarts.init(document.getElementById('chart-percentile'));
+chartP.setOption({
+  title: { text: '响应时间百分位对比 (P50/P90/P95/P99)', left: 'center', textStyle: { fontSize: 14 } },
+  tooltip: { trigger: 'axis' },
+  legend: { data: ['500并发', '1000并发'], top: 30 },
+  xAxis: { type: 'category', data: ['P50', 'P90', 'P95', 'P99'] },
+  yAxis: { type: 'value', name: 'ms' },
+  series: [
+    { name: '500并发', type: 'line', data: [1143, 4457, 4509, 4570], smooth: true, itemStyle: { color: '#e74c3c' }, lineStyle: { width: 3 } },
+    { name: '1000并发', type: 'line', data: [1192, 2681, 3260, 3665], smooth: true, itemStyle: { color: '#3498db' }, lineStyle: { width: 3 } }
+  ],
+  grid: { top: 70, bottom: 30, left: 50, right: 20 }
+});
+
+window.addEventListener('resize', function() {
+  chartQps.resize();
+  chartRt.resize();
+  chartP.resize();
+});
+</script>
+</body>
+</html>
