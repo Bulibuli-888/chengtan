@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的订单 · 城探票务</title>
+    <link rel="stylesheet" href="/css/app.css">
+    <style>
+        .orders-layout { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+        .order-card { cursor: pointer; transition: .15s; }
+        .order-card:hover { border-color: #94a3b8; }
+        .order-card.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(55,138,221,.12); }
+        @media (max-width: 860px) { .orders-layout { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak>
+    <app-header page="orders"></app-header>
+
+    <div class="container" style="padding-top:24px;padding-bottom:60px;">
+        <div class="section-title">
+            <h2>我的订单</h2>
+            <span class="muted">共 {{ total }} 笔</span>
+        </div>
+
+        <div v-if="loading" class="empty">加载中...</div>
+        <div v-else-if="orders.length === 0" class="empty">
+            还没有订单，<a href="/index.html" style="color:var(--primary);">去首页挑一场</a>
+        </div>
+        <div v-else class="orders-layout">
+            <div>
+                <div class="panel order-card" v-for="o in orders" :key="o.orderNo"
+                     :class="{active: selectedOrderNo === o.orderNo}"
+                     style="padding:14px;margin-bottom:10px;"
+                     @click="openOrder(o.orderNo, 0)">
+                    <div class="row between">
+                        <b>{{ o.venueName }}</b>
+                        <span class="badge" :class="orderStatus(o.status).cls">{{ orderStatus(o.status).text }}</span>
+                    </div>
+                    <div class="muted mt8">{{ o.sessionDate }} {{ o.startTime }} · {{ o.quantity }} 张</div>
+                    <div class="row between mt8">
+                        <span class="muted">{{ o.orderNo }}</span>
+                        <span class="price">{{ money(o.totalAmount) }}</span>
+                    </div>
+                    <div v-if="o.status === 10" class="muted mt8" style="color:#b45309;">
+                        待支付 · {{ countdownText(o) }}
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div v-if="detailLoading" class="panel empty">加载订单详情...</div>
+                <div v-else-if="!detail" class="panel empty">选择左侧订单查看详情</div>
+                <div v-else class="panel">
+                    <div class="row between wrap">
+                        <div>
+                            <div class="row">
+                                <h2 style="margin:0;font-size:20px;">{{ detail.venueName }}</h2>
+                                <span class="badge" :class="orderStatus(detail.status).cls">
+                                    {{ orderStatus(detail.status).text }}
+                                </span>
+                            </div>
+                            <p class="muted mt8" style="margin:0;">
+                                {{ detail.sessionDate }} {{ detail.startTime }} - {{ detail.endTime }}
+                                · {{ detail.quantity }} 张
+                            </p>
+                        </div>
+                        <div class="row">
+                            <button v-if="canReschedule" class="btn btn-ghost btn-sm" @click="openReschedule">改签</button>
+                            <button v-if="detail.status === 10" class="btn btn-primary btn-sm" @click="pay">立即支付</button>
+                            <button v-if="detail.status === 10" class="btn btn-danger btn-sm" @click="cancel">取消订单</button>
+                        </div>
+                    </div>
+
+                    <div v-if="detail.status === 10" class="alert alert-amber mt16">
+                        请在 <b>{{ countdownText(detail) }}</b> 内完成支付，超时后票券会自动作废并释放库存。
+                    </div>
+
+                    <div class="row between mt16">
+                        <span class="muted">订单号</span>
+                        <span>{{ detail.orderNo }}</span>
+                    </div>
+                    <div class="row between mt8">
+                        <span class="muted">单价 × 数量</span>
+                        <span>{{ money(detail.unitPrice) }} × {{ detail.quantity }}</span>
+                    </div>
+                    <div class="row between mt8">
+                        <span class="muted">订单金额</span>
+                        <span class="price" style="font-size:18px;">{{ money(detail.totalAmount) }}</span>
+                    </div>
+                    <div class="row between mt8" v-if="Number(detail.refundAmount) > 0">
+                        <span class="muted">已退金额</span>
+                        <span style="color:var(--danger);">{{ money(detail.refundAmount) }}</span>
+                    </div>
+
+                    <div class="mt24">
+                        <div class="row between">
+                            <h3 style="margin:0;font-size:16px;">票券</h3>
+                            <span class="muted" v-if="detail.status === 20 && refundableCount > 0">
+                                可勾选未核销的票退款
+                            </span>
+                        </div>
+
+                        <div class="ticket" v-for="t in detail.tickets" :key="t.id">
+                            <div class="row between wrap">
+                                <div class="row">
+                                    <input v-if="detail.status === 20 && t.status === 10" type="checkbox"
+                                           :checked="refundIds.includes(t.id)" @change="toggleRefund(t.id)">
+                                    <b>{{ t.attendeeName }}</b>
+                                    <span class="muted">{{ t.idCardMask }}</span>
+                                </div>
+                                <span class="badge" :class="ticketStatus(t.status).cls">
+                                    {{ ticketStatus(t.status).text }}
+                                </span>
+                            </div>
+                            <div class="muted mt8">票号：{{ t.ticketNo }}</div>
+                            <div class="mt8" v-if="t.status === 10 || t.status === 20">
+                                <div class="muted mb8">核销码（到场出示）</div>
+                                <div class="row">
+                                    <span class="qr" style="flex:1;">{{ t.qrToken }}</span>
+                                    <button class="btn btn-ghost btn-sm" @click="copyText(t.qrToken)">复制</button>
+                                </div>
+                            </div>
+                            <div class="muted mt8" v-if="t.verifyTime">核销时间：{{ t.verifyTime }}</div>
+                        </div>
+
+                        <div class="row mt16" v-if="detail.status === 20 && refundableCount > 0">
+                            <button class="btn btn-danger" :disabled="refundIds.length === 0" @click="refund">
+                                退款选中票（{{ refundIds.length }}）
+                            </button>
+                            <span class="muted">已核销的票不可退</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dialog-mask" v-if="showReschedule && detail" @click.self="showReschedule=false">
+        <div class="dialog">
+            <h3>改签到其他场次</h3>
+            <p class="muted" style="margin:0 0 16px;">
+                {{ detail.venueName }} · 当前 {{ detail.sessionDate }} {{ detail.startTime }}
+                · {{ detail.quantity }} 张
+            </p>
+
+            <div v-if="rescheduleLoading" class="empty">加载场次中...</div>
+            <div v-else-if="rescheduleSessions.length === 0" class="empty">
+                暂无可改签的同场馆场次
+            </div>
+            <div v-else>
+                <div v-for="s in rescheduleSessions" :key="s.id" class="check-item"
+                     :class="{selected: targetSessionId === s.id}" @click="targetSessionId = s.id">
+                    <input type="radio" :checked="targetSessionId === s.id">
+                    <div style="flex:1;">
+                        <div class="row between">
+                            <b>{{ s.sessionDate }} {{ s.startTime }} - {{ s.endTime }}</b>
+                            <span class="price">{{ money(s.price) }}</span>
+                        </div>
+                        <div class="muted mt8">余票 {{ s.remaining }} / {{ s.capacity }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="targetSessionId" class="alert alert-blue mt16">
+                差价：<b>{{ money(rescheduleDiff) }}</b>
+                <span v-if="rescheduleDiff > 0">（需补差价）</span>
+                <span v-else-if="rescheduleDiff < 0">（将退回）</span>
+                <span v-else>（无差价）</span>
+            </div>
+
+            <div class="row mt16" style="justify-content:flex-end;">
+                <button class="btn btn-ghost" @click="showReschedule=false">取消</button>
+                <button class="btn btn-primary" :disabled="!targetSessionId || rescheduling"
+                        @click="confirmReschedule">
+                    {{ rescheduling ? '处理中...' : '确认改签' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <app-footer></app-footer>
+</div>
+<script src="/vendor/vue.js"></script>
+<script src="/vendor/axios.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+    new Vue({
+        el: '#app',
+        data: {
+            orders: [],
+            total: 0,
+            page: 1,
+            size: 20,
+            loading: true,
+            detail: null,
+            detailLoading: false,
+            selectedOrderNo: null,
+            refundIds: [],
+            now: Date.now(),
+            timer: null,
+            showReschedule: false,
+            rescheduleSessions: [],
+            rescheduleLoading: false,
+            targetSessionId: null,
+            rescheduling: false
+        },
+        computed: {
+            refundableCount: function () {
+                if (!this.detail || !this.detail.tickets) {
+                    return 0;
+                }
+                return this.detail.tickets.filter(function (t) { return t.status === 10; }).length;
+            },
+            canReschedule: function () {
+                return this.detail && this.detail.status === 20
+                    && this.detail.tickets && this.detail.tickets.length > 0
+                    && this.detail.tickets.every(function (t) { return t.status === 10; });
+            },
+            rescheduleDiff: function () {
+                if (!this.targetSessionId || !this.detail) {
+                    return 0;
+                }
+                var target = this.rescheduleSessions.filter(function (s) {
+                    return s.id === this.targetSessionId;
+                }, this)[0];
+                if (!target) {
+                    return 0;
+                }
+                return (Number(target.price) - Number(this.detail.unitPrice)) * this.detail.quantity;
+            }
+        },
+        created: function () {
+            if (!api.requireLogin()) {
+                return;
+            }
+            this.loadOrders();
+            var orderNo = new URLSearchParams(location.search).get('orderNo');
+            if (orderNo) {
+                this.openOrder(orderNo, 15);
+            }
+            var self = this;
+            this.timer = setInterval(function () {
+                self.now = Date.now();
+            }, 1000);
+        },
+        beforeDestroy: function () {
+            clearInterval(this.timer);
+        },
+        methods: {
+            loadOrders: function () {
+                var self = this;
+                this.loading = true;
+                api.get('/api/orders', { page: this.page, size: this.size })
+                    .then(function (data) {
+                        self.orders = data.records || [];
+                        self.total = data.total || 0;
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    })
+                    .finally(function () {
+                        self.loading = false;
+                    });
+            },
+            openOrder: function (orderNo, attempts) {
+                var self = this;
+                this.selectedOrderNo = orderNo;
+                this.detailLoading = true;
+                api.get('/api/orders/' + orderNo)
+                    .then(function (data) {
+                        self.detail = data;
+                        self.refundIds = [];
+                    })
+                    .catch(function (e) {
+                        if (e.code === 'B2001' && attempts > 0) {
+                            setTimeout(function () {
+                                self.openOrder(orderNo, attempts - 1);
+                            }, 1000);
+                            return;
+                        }
+                        self.detail = null;
+                        showToast(e.message, 'error');
+                    })
+                    .finally(function () {
+                        self.detailLoading = false;
+                    });
+            },
+            refresh: function () {
+                this.loadOrders();
+                if (this.selectedOrderNo) {
+                    this.openOrder(this.selectedOrderNo, 0);
+                }
+            },
+            pay: function () {
+                var self = this;
+                api.post('/api/orders/' + this.detail.orderNo + '/pay')
+                    .then(function () {
+                        showToast('支付成功', 'success');
+                        self.refresh();
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    });
+            },
+            cancel: function () {
+                if (!confirm('确定取消这笔订单？取消后票券会作废。')) {
+                    return;
+                }
+                var self = this;
+                api.post('/api/orders/' + this.detail.orderNo + '/cancel')
+                    .then(function () {
+                        showToast('订单已取消', 'success');
+                        self.refresh();
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    });
+            },
+            toggleRefund: function (ticketId) {
+                var index = this.refundIds.indexOf(ticketId);
+                if (index >= 0) {
+                    this.refundIds.splice(index, 1);
+                } else {
+                    this.refundIds.push(ticketId);
+                }
+            },
+            refund: function () {
+                if (this.refundIds.length === 0) {
+                    showToast('请选择要退款的票', 'error');
+                    return;
+                }
+                if (!confirm('确定退款选中的 ' + this.refundIds.length + ' 张票？')) {
+                    return;
+                }
+                var self = this;
+                api.post('/api/orders/' + this.detail.orderNo + '/refund', {
+                    ticketIds: this.refundIds.slice()
+                }).then(function (data) {
+                    showToast('退款成功，退回 ' + money(data.refundAmount), 'success');
+                    self.refresh();
+                }).catch(function (e) {
+                    showToast(e.message, 'error');
+                });
+            },
+            openReschedule: function () {
+                var self = this;
+                this.showReschedule = true;
+                this.targetSessionId = null;
+                this.rescheduleSessions = [];
+                this.rescheduleLoading = true;
+                api.get('/api/venues/' + this.detail.venueId)
+                    .then(function (data) {
+                        self.rescheduleSessions = (data.sessions || []).filter(function (s) {
+                            return s.id !== self.detail.sessionId
+                                && s.onSale
+                                && s.remaining >= self.detail.quantity;
+                        });
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    })
+                    .finally(function () {
+                        self.rescheduleLoading = false;
+                    });
+            },
+            confirmReschedule: function () {
+                if (!this.targetSessionId) {
+                    return;
+                }
+                if (!confirm('确认改签到所选场次？')) {
+                    return;
+                }
+                var self = this;
+                this.rescheduling = true;
+                api.post('/api/orders/' + this.detail.orderNo + '/reschedule', {
+                    targetSessionId: this.targetSessionId
+                }).then(function (data) {
+                    var diff = Number(data.priceDiff);
+                    var extra = diff > 0 ? '，需补差价 ' + money(diff)
+                        : (diff < 0 ? '，将退回 ' + money(-diff) : '');
+                    showToast('改签成功' + extra, 'success');
+                    self.showReschedule = false;
+                    self.refresh();
+                }).catch(function (e) {
+                    showToast(e.message, 'error');
+                }).finally(function () {
+                    self.rescheduling = false;
+                });
+            },
+            countdownText: function (order) {
+                if (!order.expireTime) {
+                    return '';
+                }
+                var expire = new Date(order.expireTime.replace(/-/g, '/')).getTime();
+                var diff = Math.floor((expire - this.now) / 1000);
+                if (diff <= 0) {
+                    return '已超时，等待系统取消';
+                }
+                var m = Math.floor(diff / 60);
+                var s = diff % 60;
+                return m + ' 分 ' + (s < 10 ? '0' + s : s) + ' 秒';
+            }
+        }
+    });
+</script>
+</body>
+</html>

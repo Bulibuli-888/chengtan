@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>场馆详情 · 城探票务</title>
+    <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div id="app" v-cloak>
+    <app-header page="home"></app-header>
+
+    <div class="container" style="padding-top:20px;">
+        <p class="muted"><a href="/index.html">首页</a> / {{ venue ? venue.name : '场馆详情' }}</p>
+    </div>
+
+    <div class="container" v-if="loading">
+        <div class="empty">加载中...</div>
+    </div>
+
+    <div class="container" v-else-if="!venue">
+        <div class="empty">场馆不存在或已下架</div>
+    </div>
+
+    <div class="container" v-else style="padding-bottom:50px;">
+        <div class="panel" style="display:flex;gap:24px;flex-wrap:wrap;">
+            <img :src="venue.images" :alt="venue.name"
+                 style="width:340px;height:230px;object-fit:cover;border-radius:12px;background:#e6f1fb;">
+            <div style="flex:1;min-width:260px;">
+                <div class="row wrap">
+                    <span class="badge badge-blue">{{ typeName(venue.typeId) }}</span>
+                    <span class="rating">★ {{ venue.rating }}</span>
+                </div>
+                <h1 style="font-size:28px;margin:10px 0 8px;">{{ venue.name }}</h1>
+                <p class="muted" style="margin:0 0 12px;">{{ venue.address }}</p>
+                <p style="line-height:1.8;margin:0;">{{ venue.description }}</p>
+                <div class="alert alert-blue mt16">
+                    实名制购票：同一场次、同一证件只能有一张有效票；每单最多 3 张，售罄后可关注候补。
+                </div>
+            </div>
+        </div>
+
+        <div class="panel mt24">
+            <div class="row between">
+                <h2 class="panel-title" style="margin:0;">选择场次</h2>
+                <span class="muted">库存按场次独立计算</span>
+            </div>
+
+            <div v-if="groupedSessions.length === 0" class="empty">近期暂无场次</div>
+
+            <div v-for="group in groupedSessions" :key="group.date">
+                <div class="row between" style="margin:20px 0 4px;">
+                    <b>{{ dateLabel(group.date) }}</b>
+                    <span class="muted">{{ group.items.length }} 个场次</span>
+                </div>
+                <div class="session-row" v-for="s in group.items" :key="s.id">
+                    <div>
+                        <div class="session-time">{{ s.startTime }} - {{ s.endTime }}</div>
+                        <div class="muted mt8">
+                            余票 {{ s.remaining }} / {{ s.capacity }}
+                            <span v-if="s.remaining > 0 && s.remaining <= 10" style="color:#b45309;">· 余票紧张</span>
+                        </div>
+                    </div>
+                    <div class="session-meta">
+                        <span class="price">{{ money(s.price) }}<small>/张</small></span>
+                        <span class="badge" :class="s.onSale ? 'badge-green' : (s.remaining === 0 ? 'badge-red' : 'badge-gray')">
+                            {{ s.onSale ? '售票中' : (s.remaining === 0 ? '已售罄' : '未开售') }}
+                        </span>
+                        <button v-if="s.remaining === 0" class="btn btn-ghost btn-sm" @click="joinWaitlist(s)">
+                            加入候补
+                        </button>
+                        <button v-else class="btn btn-primary btn-sm" :disabled="!s.onSale" @click="openBuy(s)">
+                            立即抢票
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dialog-mask" v-if="showBuy && selectedSession" @click.self="showBuy=false">
+        <div class="dialog">
+            <h3>确认抢票</h3>
+            <p class="muted" style="margin:0 0 16px;">
+                {{ selectedSession.sessionDate }} {{ selectedSession.startTime }} - {{ selectedSession.endTime }}
+                · {{ money(selectedSession.price) }}/张
+            </p>
+
+            <div class="form-row">
+                <label>购买数量</label>
+                <select class="select" v-model.number="quantity" @change="onQuantityChange">
+                    <option v-for="n in maxQuantity" :key="n" :value="n">{{ n }} 张</option>
+                </select>
+            </div>
+
+            <div class="form-row">
+                <label>选择出行人（需选 {{ quantity }} 位）</label>
+                <div v-if="attendees.length === 0" class="muted" style="margin-bottom:8px;">
+                    还没有出行人，请先在下方添加
+                </div>
+                <div v-for="a in attendees" :key="a.id" class="check-item"
+                     :class="{selected: selectedAttendeeIds.includes(a.id)}"
+                     @click="toggleAttendee(a.id)">
+                    <input type="checkbox" :checked="selectedAttendeeIds.includes(a.id)"
+                           @click.stop="toggleAttendee(a.id)">
+                    <div>
+                        <div>{{ a.name }}</div>
+                        <div class="muted">{{ a.idCardMask }}</div>
+                    </div>
+                </div>
+                <button class="btn btn-ghost btn-sm mt8" @click="showAttendeeForm = !showAttendeeForm">
+                    {{ showAttendeeForm ? '收起' : '+ 新增出行人' }}
+                </button>
+            </div>
+
+            <div v-if="showAttendeeForm" class="panel" style="background:#f8fafc;padding:14px;">
+                <div class="form-row">
+                    <label>姓名</label>
+                    <input class="input" v-model.trim="newAttendee.name" maxlength="32" placeholder="与证件一致">
+                </div>
+                <div class="form-row">
+                    <label>身份证号</label>
+                    <input class="input" v-model.trim="newAttendee.idCard" maxlength="18" placeholder="18 位身份证号">
+                </div>
+                <div class="form-row">
+                    <label>手机号（选填）</label>
+                    <input class="input" v-model.trim="newAttendee.phone" maxlength="11" placeholder="接收出行通知">
+                </div>
+                <button class="btn btn-primary btn-sm" :disabled="addingAttendee" @click="addAttendee">
+                    {{ addingAttendee ? '保存中...' : '保存出行人' }}
+                </button>
+                <p class="muted mt8" style="margin-bottom:0;">演示项目只保存证件哈希和掩码，不存明文。</p>
+            </div>
+
+            <div class="row between mt16">
+                <span class="muted">合计</span>
+                <span class="price" style="font-size:20px;">{{ money(selectedTotal) }}</span>
+            </div>
+            <div class="row mt16" style="justify-content:flex-end;">
+                <button class="btn btn-ghost" @click="showBuy=false">取消</button>
+                <button class="btn btn-primary" :disabled="!canSubmit || buying" @click="submit">
+                    {{ buying ? '提交中...' : '确认抢票' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <app-footer></app-footer>
+</div>
+<script src="/vendor/vue.js"></script>
+<script src="/vendor/axios.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+    new Vue({
+        el: '#app',
+        data: {
+            venueId: null,
+            venue: null,
+            types: [],
+            loading: true,
+            attendees: [],
+            selectedSession: null,
+            quantity: 1,
+            selectedAttendeeIds: [],
+            showBuy: false,
+            buying: false,
+            showAttendeeForm: false,
+            addingAttendee: false,
+            newAttendee: { name: '', idCard: '', phone: '' }
+        },
+        computed: {
+            groupedSessions: function () {
+                if (!this.venue || !this.venue.sessions) {
+                    return [];
+                }
+                var map = {};
+                var order = [];
+                this.venue.sessions.forEach(function (s) {
+                    if (!map[s.sessionDate]) {
+                        map[s.sessionDate] = { date: s.sessionDate, items: [] };
+                        order.push(map[s.sessionDate]);
+                    }
+                    map[s.sessionDate].items.push(s);
+                });
+                return order;
+            },
+            maxQuantity: function () {
+                if (!this.selectedSession) {
+                    return 1;
+                }
+                return Math.max(1, Math.min(3, this.selectedSession.remaining));
+            },
+            selectedTotal: function () {
+                if (!this.selectedSession) {
+                    return 0;
+                }
+                return Number(this.selectedSession.price) * this.quantity;
+            },
+            canSubmit: function () {
+                return this.selectedSession && this.quantity > 0
+                    && this.selectedAttendeeIds.length === this.quantity;
+            }
+        },
+        created: function () {
+            var id = new URLSearchParams(location.search).get('id');
+            if (!id) {
+                location.href = '/index.html';
+                return;
+            }
+            this.venueId = id;
+            this.loadVenue();
+            this.loadTypes();
+            if (api.token()) {
+                this.loadAttendees();
+            }
+        },
+        methods: {
+            loadVenue: function () {
+                var self = this;
+                this.loading = true;
+                api.get('/api/venues/' + this.venueId)
+                    .then(function (data) {
+                        self.venue = data;
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                        self.venue = null;
+                    })
+                    .finally(function () {
+                        self.loading = false;
+                    });
+            },
+            loadTypes: function () {
+                var self = this;
+                api.get('/api/venues/types').then(function (data) {
+                    self.types = data || [];
+                }).catch(function () {});
+            },
+            loadAttendees: function () {
+                var self = this;
+                api.get('/api/attendees').then(function (data) {
+                    self.attendees = data || [];
+                }).catch(function () {});
+            },
+            typeName: function (typeId) {
+                var found = this.types.filter(function (t) { return t.id === typeId; })[0];
+                return found ? found.name : '场馆';
+            },
+            openBuy: function (session) {
+                if (!api.requireLogin()) {
+                    return;
+                }
+                if (!session.onSale) {
+                    showToast('该场次当前不可购买', 'error');
+                    return;
+                }
+                this.selectedSession = session;
+                this.quantity = 1;
+                this.selectedAttendeeIds = [];
+                this.showBuy = true;
+                this.showAttendeeForm = false;
+                this.loadAttendees();
+            },
+            joinWaitlist: function (session) {
+                if (!api.requireLogin()) {
+                    return;
+                }
+                api.post('/api/waitlist', { sessionId: session.id, quantity: 1 })
+                    .then(function () {
+                        showToast('已加入候补，可在“我的候补”查看队列', 'success');
+                        setTimeout(function () {
+                            location.href = '/waitlist.html';
+                        }, 800);
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    });
+            },
+            toggleAttendee: function (id) {
+                var index = this.selectedAttendeeIds.indexOf(id);
+                if (index >= 0) {
+                    this.selectedAttendeeIds.splice(index, 1);
+                    return;
+                }
+                if (this.selectedAttendeeIds.length >= this.quantity) {
+                    showToast('已选满 ' + this.quantity + ' 位出行人', 'error');
+                    return;
+                }
+                this.selectedAttendeeIds.push(id);
+            },
+            onQuantityChange: function () {
+                if (this.selectedAttendeeIds.length > this.quantity) {
+                    this.selectedAttendeeIds = this.selectedAttendeeIds.slice(0, this.quantity);
+                }
+            },
+            addAttendee: function () {
+                var self = this;
+                if (!this.newAttendee.name) {
+                    showToast('请填写姓名', 'error');
+                    return;
+                }
+                if (!/^\d{17}[\dXx]$/.test(this.newAttendee.idCard)) {
+                    showToast('身份证号格式不正确', 'error');
+                    return;
+                }
+                this.addingAttendee = true;
+                api.post('/api/attendees', this.newAttendee)
+                    .then(function (data) {
+                        self.attendees.unshift(data);
+                        if (self.selectedAttendeeIds.length < self.quantity) {
+                            self.selectedAttendeeIds.push(data.id);
+                        }
+                        self.newAttendee = { name: '', idCard: '', phone: '' };
+                        self.showAttendeeForm = false;
+                        showToast('出行人已添加', 'success');
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    })
+                    .finally(function () {
+                        self.addingAttendee = false;
+                    });
+            },
+            submit: function () {
+                var self = this;
+                if (!this.canSubmit) {
+                    showToast('请选择 ' + this.quantity + ' 位出行人', 'error');
+                    return;
+                }
+                this.buying = true;
+                api.post('/api/orders', {
+                    sessionId: this.selectedSession.id,
+                    quantity: this.quantity,
+                    attendeeIds: this.selectedAttendeeIds.slice()
+                }).then(function (data) {
+                    self.showBuy = false;
+                    showToast('抢票成功，订单创建中...', 'success');
+                    self.pollOrder(data.orderNo, 20);
+                }).catch(function (e) {
+                    showToast(e.message, 'error');
+                }).finally(function () {
+                    self.buying = false;
+                });
+            },
+            pollOrder: function (orderNo, attempts) {
+                var self = this;
+                api.get('/api/orders/' + orderNo)
+                    .then(function () {
+                        location.href = '/orders.html?orderNo=' + orderNo;
+                    })
+                    .catch(function (e) {
+                        if (e.code === 'B2001' && attempts > 0) {
+                            setTimeout(function () {
+                                self.pollOrder(orderNo, attempts - 1);
+                            }, 1000);
+                            return;
+                        }
+                        showToast('订单创建中，请稍后到“我的订单”查看', 'error');
+                        location.href = '/orders.html';
+                    });
+            }
+        }
+    });
+</script>
+</body>
+</html>

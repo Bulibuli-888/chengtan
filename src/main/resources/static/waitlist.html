@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的候补 · 城探票务</title>
+    <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div id="app" v-cloak>
+    <app-header page="waitlist"></app-header>
+
+    <div class="container" style="max-width:900px;padding-top:24px;padding-bottom:60px;">
+        <div class="section-title">
+            <h2>我的候补</h2>
+            <span class="muted">补位后 10 分钟内完成下单，否则顺延下一位</span>
+        </div>
+
+        <div v-if="loading" class="empty">加载中...</div>
+        <div v-else-if="items.length === 0" class="empty">
+            还没有候补记录，<a href="/index.html" style="color:var(--primary);">去首页看看</a>
+        </div>
+        <div v-else>
+            <div class="panel" v-for="w in items" :key="w.id" style="margin-bottom:12px;">
+                <div class="row between wrap">
+                    <div>
+                        <div class="row">
+                            <b>{{ w.venueName }}</b>
+                            <span class="badge" :class="statusMeta(w.status).cls">{{ statusMeta(w.status).text }}</span>
+                        </div>
+                        <div class="muted mt8">
+                            {{ w.sessionDate }} {{ w.startTime }} - {{ w.endTime }}
+                            · {{ w.quantity }} 张 · {{ money(w.price) }}/张
+                        </div>
+                        <div class="muted mt8" v-if="w.status === 0 && w.position">
+                            当前第 {{ w.position }} 位
+                        </div>
+                        <div class="muted mt8" v-if="w.status === 1" style="color:#b45309;">
+                            已为你预留票，剩余 {{ countdown(w) }}
+                        </div>
+                        <div class="muted mt8" v-if="w.status === 2">
+                            已转订单，去「我的订单」完成支付
+                        </div>
+                    </div>
+                    <div class="row">
+                        <button v-if="w.status === 0" class="btn btn-ghost btn-sm" @click="cancel(w)">取消候补</button>
+                        <button v-if="w.status === 1" class="btn btn-primary btn-sm" @click="openClaim(w)">去下单</button>
+                        <button v-if="w.status === 1" class="btn btn-ghost btn-sm" @click="cancel(w)">放弃</button>
+                        <a v-if="w.status === 2" class="btn btn-ghost btn-sm" href="/orders.html">查看订单</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dialog-mask" v-if="showClaim && selected" @click.self="showClaim=false">
+        <div class="dialog">
+            <h3>候补下单</h3>
+            <p class="muted" style="margin:0 0 16px;">
+                {{ selected.venueName }} · {{ selected.sessionDate }} {{ selected.startTime }}
+                · {{ selected.quantity }} 张
+            </p>
+
+            <div class="form-row">
+                <label>选择出行人（需选 {{ selected.quantity }} 位）</label>
+                <div v-if="attendees.length === 0" class="muted" style="margin-bottom:8px;">
+                    还没有出行人，请先在下方添加
+                </div>
+                <div v-for="a in attendees" :key="a.id" class="check-item"
+                     :class="{selected: selectedAttendeeIds.includes(a.id)}"
+                     @click="toggleAttendee(a.id)">
+                    <input type="checkbox" :checked="selectedAttendeeIds.includes(a.id)"
+                           @click.stop="toggleAttendee(a.id)">
+                    <div>
+                        <div>{{ a.name }}</div>
+                        <div class="muted">{{ a.idCardMask }}</div>
+                    </div>
+                </div>
+                <button class="btn btn-ghost btn-sm mt8" @click="showAttendeeForm = !showAttendeeForm">
+                    {{ showAttendeeForm ? '收起' : '+ 新增出行人' }}
+                </button>
+            </div>
+
+            <div v-if="showAttendeeForm" class="panel" style="background:#f8fafc;padding:14px;">
+                <div class="form-row">
+                    <label>姓名</label>
+                    <input class="input" v-model.trim="newAttendee.name" maxlength="32" placeholder="与证件一致">
+                </div>
+                <div class="form-row">
+                    <label>身份证号</label>
+                    <input class="input" v-model.trim="newAttendee.idCard" maxlength="18" placeholder="18 位身份证号">
+                </div>
+                <div class="form-row">
+                    <label>手机号（选填）</label>
+                    <input class="input" v-model.trim="newAttendee.phone" maxlength="11" placeholder="接收出行通知">
+                </div>
+                <button class="btn btn-primary btn-sm" :disabled="addingAttendee" @click="addAttendee">
+                    {{ addingAttendee ? '保存中...' : '保存出行人' }}
+                </button>
+                <p class="muted mt8" style="margin-bottom:0;">演示项目只保存证件哈希和掩码，不存明文。</p>
+            </div>
+
+            <div class="row between mt16">
+                <span class="muted">合计</span>
+                <span class="price" style="font-size:20px;">{{ money(selected.price * selected.quantity) }}</span>
+            </div>
+            <div class="row mt16" style="justify-content:flex-end;">
+                <button class="btn btn-ghost" @click="showClaim=false">取消</button>
+                <button class="btn btn-primary"
+                        :disabled="selectedAttendeeIds.length !== selected.quantity || claiming"
+                        @click="claim">
+                    {{ claiming ? '提交中...' : '确认下单' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <app-footer></app-footer>
+</div>
+<script src="/vendor/vue.js"></script>
+<script src="/vendor/axios.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+    new Vue({
+        el: '#app',
+        data: {
+            items: [],
+            loading: true,
+            now: Date.now(),
+            timer: null,
+            showClaim: false,
+            selected: null,
+            attendees: [],
+            selectedAttendeeIds: [],
+            claiming: false,
+            showAttendeeForm: false,
+            addingAttendee: false,
+            newAttendee: { name: '', idCard: '', phone: '' }
+        },
+        created: function () {
+            if (!api.requireLogin()) {
+                return;
+            }
+            this.load();
+            var self = this;
+            this.timer = setInterval(function () {
+                self.now = Date.now();
+            }, 1000);
+        },
+        beforeDestroy: function () {
+            clearInterval(this.timer);
+        },
+        methods: {
+            load: function () {
+                var self = this;
+                this.loading = true;
+                api.get('/api/waitlist/my')
+                    .then(function (data) {
+                        self.items = data || [];
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    })
+                    .finally(function () {
+                        self.loading = false;
+                    });
+            },
+            statusMeta: function (status) {
+                var map = {
+                    0: { text: '排队中', cls: 'badge-blue' },
+                    1: { text: '已补位待支付', cls: 'badge-amber' },
+                    2: { text: '已转订单', cls: 'badge-green' },
+                    3: { text: '已取消', cls: 'badge-gray' },
+                    4: { text: '已过期', cls: 'badge-gray' }
+                };
+                return map[status] || { text: '未知', cls: 'badge-gray' };
+            },
+            countdown: function (item) {
+                if (!item.offerExpireTime) {
+                    return '';
+                }
+                var expire = new Date(item.offerExpireTime.replace(/-/g, '/')).getTime();
+                var diff = Math.floor((expire - this.now) / 1000);
+                if (diff <= 0) {
+                    return '已过期';
+                }
+                var m = Math.floor(diff / 60);
+                var s = diff % 60;
+                return m + ' 分 ' + (s < 10 ? '0' + s : s) + ' 秒';
+            },
+            cancel: function (item) {
+                if (!confirm('确定取消这条候补？')) {
+                    return;
+                }
+                var self = this;
+                api.request('/api/waitlist/' + item.id, { method: 'DELETE' })
+                    .then(function () {
+                        showToast('候补已取消', 'success');
+                        self.load();
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    });
+            },
+            openClaim: function (item) {
+                this.selected = item;
+                this.selectedAttendeeIds = [];
+                this.showAttendeeForm = false;
+                this.showClaim = true;
+                this.loadAttendees();
+            },
+            loadAttendees: function () {
+                var self = this;
+                api.get('/api/attendees').then(function (data) {
+                    self.attendees = data || [];
+                }).catch(function () {});
+            },
+            toggleAttendee: function (id) {
+                var index = this.selectedAttendeeIds.indexOf(id);
+                if (index >= 0) {
+                    this.selectedAttendeeIds.splice(index, 1);
+                    return;
+                }
+                if (this.selectedAttendeeIds.length >= this.selected.quantity) {
+                    showToast('已选满 ' + this.selected.quantity + ' 位出行人', 'error');
+                    return;
+                }
+                this.selectedAttendeeIds.push(id);
+            },
+            addAttendee: function () {
+                var self = this;
+                if (!this.newAttendee.name) {
+                    showToast('请填写姓名', 'error');
+                    return;
+                }
+                if (!/^\d{17}[\dXx]$/.test(this.newAttendee.idCard)) {
+                    showToast('身份证号格式不正确', 'error');
+                    return;
+                }
+                this.addingAttendee = true;
+                api.post('/api/attendees', this.newAttendee)
+                    .then(function (data) {
+                        self.attendees.unshift(data);
+                        if (self.selectedAttendeeIds.length < self.selected.quantity) {
+                            self.selectedAttendeeIds.push(data.id);
+                        }
+                        self.newAttendee = { name: '', idCard: '', phone: '' };
+                        self.showAttendeeForm = false;
+                        showToast('出行人已添加', 'success');
+                    })
+                    .catch(function (e) {
+                        showToast(e.message, 'error');
+                    })
+                    .finally(function () {
+                        self.addingAttendee = false;
+                    });
+            },
+            claim: function () {
+                var self = this;
+                if (this.selectedAttendeeIds.length !== this.selected.quantity) {
+                    showToast('请选择 ' + this.selected.quantity + ' 位出行人', 'error');
+                    return;
+                }
+                this.claiming = true;
+                api.post('/api/waitlist/' + this.selected.id + '/claim', {
+                    attendeeIds: this.selectedAttendeeIds.slice()
+                }).then(function (data) {
+                    self.showClaim = false;
+                    showToast('下单成功，订单创建中...', 'success');
+                    self.pollOrder(data.orderNo, 20);
+                }).catch(function (e) {
+                    showToast(e.message, 'error');
+                }).finally(function () {
+                    self.claiming = false;
+                });
+            },
+            pollOrder: function (orderNo, attempts) {
+                var self = this;
+                api.get('/api/orders/' + orderNo)
+                    .then(function () {
+                        location.href = '/orders.html?orderNo=' + orderNo;
+                    })
+                    .catch(function (e) {
+                        if (e.code === 'B2001' && attempts > 0) {
+                            setTimeout(function () {
+                                self.pollOrder(orderNo, attempts - 1);
+                            }, 1000);
+                            return;
+                        }
+                        showToast('订单创建中，请稍后到“我的订单”查看', 'error');
+                        location.href = '/orders.html';
+                    });
+            }
+        }
+    });
+</script>
+</body>
+</html>
