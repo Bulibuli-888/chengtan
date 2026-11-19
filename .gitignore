@@ -39,3 +39,4 @@ logs/
 *.log
 erl_crash.dump
 hs_err_pid*.log
+imgs/
