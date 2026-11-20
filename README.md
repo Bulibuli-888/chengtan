@@ -32,6 +32,7 @@
 - Redis Lua 原子扣减 + MySQL 乐观条件更新，双层防超卖
 - RabbitMQ 异步下单，Publisher Confirms + 手动 ACK + DLQ
 - 本地消息表（Outbox）解决「Redis 扣减成功但 MQ 投递失败」
+- 下单请求级幂等：同一 `requestId` 重复提交返回同一订单号，不会二次扣库存
 - TTL + 死信队列实现支付超时，另有扫表兜底
 - 库存对账任务：Redis 库存高于数据库时单向修正，优先保证不超卖
 - 统一返回结构、业务错误码、全局异常、Swagger、Actuator
@@ -203,6 +204,7 @@ sequenceDiagram
 | 已支付按票退款 | 状态收敛且可再购 | 订单 `50`、票 `30`、库存回补、证件集合移除 |
 | 同一 requestId 重复核销 | 幂等一次 | 第一次 `idempotent=false`，第二次 `true`，`ct_verify_log` 只有 1 条 |
 | 同证件重复购票 | 一证一票 | 第二次被 Lua 拦截并提示证件重复，库存不被二次扣减 |
+| 同一 requestId 重复下单 | 不重复扣库存 | 两次返回同一订单号，`ct_order_outbox` 只有 1 条 |
 
 测试通过 `@MockitoBean` 替换 MQ 生产者，避免测试消息被正在运行的实例消费；`application-test.yaml` 关闭全部定时任务与消费者容器，保证断言确定性。
 
@@ -233,7 +235,7 @@ sequenceDiagram
 
 | 指标 | 类型 | 说明 |
 |---|---|---|
-| `chengtan_seckill_total{result}` | counter | 抢票结果：`success` / `sold_out` / `limit` / `not_on_sale` / `ended` / `not_init` / `id_dup` |
+| `chengtan_seckill_total{result}` | counter | 抢票结果：`success` / `sold_out` / `limit` / `not_on_sale` / `ended` / `not_init` / `id_dup` / `duplicate` |
 | `chengtan_order_success_total` | counter | 消费端成功创建的订单数 |
 | `chengtan_ticket_verify_total{result}` | counter | 核销结果：`ok` / `idempotent` |
 
@@ -347,14 +349,15 @@ src/main/java/com/chengtan
 - 压测为单机短连接、客户端与服务端同机，**不代表集群能力**；未做混沌演练
 - 前端是 Vue 2 + 原生 CSS，未做工程化构建
 
-## 11. 面试可以展开的 6 个问题
+## 11. 面试可以展开的 7 个问题
 
 1. Redis 已经扣了库存，为什么还要写 Outbox？
 2. 消息重复投递时，如何保证不重复创建订单？
-3. 候补补位为什么要先预扣库存，不预扣会怎样？
-4. 改签要同时动两个场次，怎么保证原子性和避免死锁？
-5. 一证一票为什么用生成列 + 唯一索引，而不是只在代码里判断？
-6. 核销接口怎么做到幂等？二维码被截图转发怎么办？
+3. 用户连点两次「抢票」，怎么保证只下一单？
+4. 候补补位为什么要先预扣库存，不预扣会怎样？
+5. 改签要同时动两个场次，怎么保证原子性和避免死锁？
+6. 一证一票为什么用生成列 + 唯一索引，而不是只在代码里判断？
+7. 核销接口怎么做到幂等？二维码被截图转发怎么办？
 
 ## 12. 页面截图
 

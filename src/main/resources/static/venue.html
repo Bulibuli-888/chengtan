@@ -168,6 +168,7 @@
             buying: false,
             showAttendeeForm: false,
             addingAttendee: false,
+            requestId: '',
             newAttendee: { name: '', idCard: '', phone: '' }
         },
         computed: {
@@ -259,6 +260,8 @@
                 this.selectedSession = session;
                 this.quantity = 1;
                 this.selectedAttendeeIds = [];
+                // 一次弹窗一个 requestId：重复点击 / 网络重试都会命中同一个幂等键
+                this.requestId = newRequestId();
                 this.showBuy = true;
                 this.showAttendeeForm = false;
                 this.loadAttendees();
@@ -333,7 +336,8 @@
                 api.post('/api/orders', {
                     sessionId: this.selectedSession.id,
                     quantity: this.quantity,
-                    attendeeIds: this.selectedAttendeeIds.slice()
+                    attendeeIds: this.selectedAttendeeIds.slice(),
+                    requestId: this.requestId
                 }).then(function (data) {
                     self.showBuy = false;
                     showToast('抢票成功，订单创建中...', 'success');

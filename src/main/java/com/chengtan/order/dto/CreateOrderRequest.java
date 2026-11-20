@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
@@ -21,4 +22,11 @@ public class CreateOrderRequest {
 
     @NotEmpty(message = "请选择出行人")
     private List<Long> attendeeIds;
+
+    /**
+     * 客户端生成的请求 ID，用于下单幂等。
+     * 同一个 requestId 重复提交只会创建一笔订单；不传则退化为无幂等保护。
+     */
+    @Size(max = 64, message = "requestId 过长")
+    private String requestId;
 }

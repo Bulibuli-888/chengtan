@@ -8,6 +8,7 @@ import com.chengtan.common.enums.TicketStatus;
 import com.chengtan.mq.OrderCreateMessage;
 import com.chengtan.mq.OrderProducer;
 import com.chengtan.order.dto.CreateOrderRequest;
+import com.chengtan.order.dto.CreateOrderVO;
 import com.chengtan.order.dto.RefundRequest;
 import com.chengtan.order.dto.RefundVO;
 import com.chengtan.order.service.CreateHandleResult;
@@ -94,6 +95,7 @@ class TicketingInvariantTest {
     private final Set<Long> sessionIds = new HashSet<>();
     private final Set<Long> attendeeIds = new HashSet<>();
     private final Set<String> orderNos = new HashSet<>();
+    private final Set<String> guardKeys = new HashSet<>();
 
     @AfterEach
     void cleanUp() {
@@ -116,9 +118,13 @@ class TicketingInvariantTest {
         });
         attendeeIds.forEach(attendeeId ->
                 jdbc.update("DELETE FROM ct_attendee WHERE id = ?", attendeeId));
+        if (!guardKeys.isEmpty()) {
+            redis.delete(guardKeys);
+        }
         sessionIds.clear();
         attendeeIds.clear();
         orderNos.clear();
+        guardKeys.clear();
     }
 
     // ------------------------------------------------------------------
@@ -355,6 +361,28 @@ class TicketingInvariantTest {
     }
 
     // ------------------------------------------------------------------
+    // 7. 请求级幂等
+    // ------------------------------------------------------------------
+    @Test
+    @Order(7)
+    @DisplayName("同一 requestId 重复提交：返回同一订单号，库存只扣一次")
+    void duplicateSubmitWithSameRequestIdCreatesOneOrder() {
+        long sessionId = createSession(3);
+        long userId = 7_600_000L + SEQ.incrementAndGet();
+        long attendeeId = createAttendee(userId);
+
+        CreateOrderVO first = submit(userId, sessionId, List.of(attendeeId), "it-req-dup");
+        CreateOrderVO second = submit(userId, sessionId, List.of(attendeeId), "it-req-dup");
+
+        assertEquals(first.getOrderNo(), second.getOrderNo(), "重复提交应返回同一订单号");
+        assertEquals("DUPLICATE", second.getStatus());
+        assertEquals("2", redis.opsForValue().get("ticket:stock:" + sessionId),
+                "重复提交不能二次扣库存");
+        assertEquals(1, count("SELECT COUNT(*) FROM ct_order_outbox WHERE order_no = ?",
+                first.getOrderNo()), "本地消息表只能有一条");
+    }
+
+    // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
 
@@ -394,6 +422,23 @@ class TicketingInvariantTest {
                 orderNos.add(orderNo);
             }
             return orderNo;
+        });
+    }
+
+    private CreateOrderVO submit(long userId, long sessionId, List<Long> attendeeIds,
+                                 String requestId) {
+        return asUser(userId, () -> {
+            CreateOrderRequest request = new CreateOrderRequest();
+            request.setSessionId(sessionId);
+            request.setQuantity(attendeeIds.size());
+            request.setAttendeeIds(attendeeIds);
+            request.setRequestId(requestId);
+            CreateOrderVO vo = orderService.createOrder(request);
+            synchronized (orderNos) {
+                orderNos.add(vo.getOrderNo());
+                guardKeys.add("order:req:" + userId + ":" + requestId);
+            }
+            return vo;
         });
     }
 

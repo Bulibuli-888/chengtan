@@ -62,8 +62,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -140,6 +142,22 @@ public class OrderServiceImpl implements OrderService {
             throw new BizException(ErrorCode.PARAM_ERROR, "出行人不能重复");
         }
 
+        // 请求级幂等：同一个 requestId 只允许创建一笔订单，重复提交直接返回原订单号
+        String guardKey = null;
+        if (StringUtils.hasText(request.getRequestId())) {
+            guardKey = CacheKeys.ORDER_REQUEST + userId + ":" + request.getRequestId();
+            Boolean first = redis.opsForValue()
+                    .setIfAbsent(guardKey, "PENDING", Duration.ofMinutes(5));
+            if (!Boolean.TRUE.equals(first)) {
+                String cached = redis.opsForValue().get(guardKey);
+                if (cached != null && !"PENDING".equals(cached)) {
+                    metrics.seckill("duplicate");
+                    return new CreateOrderVO(cached, "DUPLICATE");
+                }
+                throw new BizException(ErrorCode.CONFLICT, "请求处理中，请勿重复提交");
+            }
+        }
+
         String metaKey = CacheKeys.SECKILL_META + sessionId;
         if (!Boolean.TRUE.equals(redis.hasKey(metaKey))) {
             sessionCacheService.warm(sessionId);
@@ -168,8 +186,12 @@ public class OrderServiceImpl implements OrderService {
         Long result = redis.execute(SECKILL_SCRIPT, keys, args.toArray());
         int code = result == null ? -1 : result.intValue();
         if (code != 0) {
+            releaseRequestGuard(guardKey);
             metrics.seckill(metricLabel(code));
             throw mapSeckillError(code);
+        }
+        if (guardKey != null) {
+            redis.opsForValue().set(guardKey, orderNo, Duration.ofMinutes(5));
         }
 
         try {
@@ -199,12 +221,25 @@ public class OrderServiceImpl implements OrderService {
             metrics.seckill("success");
             return new CreateOrderVO(orderNo, "CREATING");
         } catch (BizException e) {
+            releaseRequestGuard(guardKey);
             rollbackRedis(sessionId, userId, quantity, attendeeIds);
             throw e;
         } catch (Exception e) {
             log.error("下单落库失败, orderNo={}", orderNo, e);
+            releaseRequestGuard(guardKey);
             rollbackRedis(sessionId, userId, quantity, attendeeIds);
             throw new BizException(ErrorCode.SYSTEM_ERROR, "下单失败，请重试");
+        }
+    }
+
+    private void releaseRequestGuard(String guardKey) {
+        if (guardKey == null) {
+            return;
+        }
+        try {
+            redis.delete(guardKey);
+        } catch (Exception e) {
+            log.warn("释放下单幂等标记失败, key={}", guardKey, e);
         }
     }
 
