@@ -1,6 +1,7 @@
 package com.chengtan.mq;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.chengtan.metrics.TicketMetrics;
 import com.chengtan.order.entity.OrderOutbox;
 import com.chengtan.order.mapper.OrderOutboxMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,10 +26,17 @@ import java.util.concurrent.TimeUnit;
 @ConditionalOnProperty(name = "app.jobs.enabled", havingValue = "true", matchIfMissing = true)
 public class OrderOutboxRelay {
 
+    /**
+     * 最大重试次数。退避上限 60s，20 次大约覆盖 15 分钟，足够跨过一次 MQ 重启。
+     * 超过之后进入 status=2（人工处理），由 POST /api/admin/outbox/replay 重放。
+     */
+    private static final int MAX_RETRY = 20;
+
     private final OrderOutboxMapper outboxMapper;
     private final OrderProducer producer;
     private final ObjectMapper objectMapper;
     private final StringRedisTemplate redis;
+    private final TicketMetrics metrics;
 
     @Scheduled(fixedDelay = 1000, initialDelay = 3000)
     public void relay() {
@@ -65,13 +73,20 @@ public class OrderOutboxRelay {
     private void retry(OrderOutbox outbox) {
         int retryCount = outbox.getRetryCount() == null ? 0 : outbox.getRetryCount();
         retryCount++;
+        boolean dead = retryCount >= MAX_RETRY;
         outbox.setRetryCount(retryCount);
-        outbox.setStatus(retryCount >= 5 ? 2 : 0);
+        outbox.setStatus(dead ? 2 : 0);
         long delaySeconds = Math.min(60, 1L << Math.min(retryCount, 6));
         outbox.setNextRetryTime(LocalDateTime.now().plusSeconds(delaySeconds));
         outbox.setUpdateTime(LocalDateTime.now());
         outboxMapper.updateById(outbox);
-        log.warn("Outbox 重试 {}/5, orderNo={}, next={}",
-                retryCount, outbox.getOrderNo(), outbox.getNextRetryTime());
+        if (dead) {
+            metrics.outboxDead();
+            log.error("Outbox 重试耗尽，需人工重放, orderNo={}, retry={}",
+                    outbox.getOrderNo(), retryCount);
+        } else {
+            log.warn("Outbox 重试 {}/{}, orderNo={}, next={}",
+                    retryCount, MAX_RETRY, outbox.getOrderNo(), outbox.getNextRetryTime());
+        }
     }
 }

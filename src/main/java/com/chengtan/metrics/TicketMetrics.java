@@ -20,6 +20,7 @@ public class TicketMetrics {
      */
     public static final String ORDER_SUCCESS = "chengtan_order_success_total";
     public static final String VERIFY = "chengtan_ticket_verify_total";
+    public static final String OUTBOX_DEAD = "chengtan_outbox_dead_total";
 
     private final MeterRegistry registry;
 
@@ -48,6 +49,16 @@ public class TicketMetrics {
         Counter.builder(VERIFY)
                 .description("核销结果计数")
                 .tag("result", result)
+                .register(registry)
+                .increment();
+    }
+
+    /**
+     * Outbox 重试耗尽、进入人工处理，应该配告警。
+     */
+    public void outboxDead() {
+        Counter.builder(OUTBOX_DEAD)
+                .description("本地消息表重试耗尽条数")
                 .register(registry)
                 .increment();
     }

@@ -29,6 +29,7 @@ public class WebConfig implements WebMvcConfigurer {
                         "/api/attendees/**",
                         "/api/waitlist/**",
                         "/api/verify/**",
+                        "/api/admin/**",
                         "/api/auth/logout",
                         "/api/auth/me")
                 .order(1);

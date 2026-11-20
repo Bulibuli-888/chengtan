@@ -31,7 +31,7 @@
 - 缓存穿透（空值缓存）、击穿（互斥锁）、雪崩（TTL 随机偏移）
 - Redis Lua 原子扣减 + MySQL 乐观条件更新，双层防超卖
 - RabbitMQ 异步下单，Publisher Confirms + 手动 ACK + DLQ
-- 本地消息表（Outbox）解决「Redis 扣减成功但 MQ 投递失败」
+- 本地消息表（Outbox）解决「Redis 扣减成功但 MQ 投递失败」；重试窗口约 15 分钟，耗尽后可 `POST /api/admin/outbox/replay` 人工重放
 - 下单请求级幂等：同一 `requestId` 重复提交返回同一订单号，不会二次扣库存
 - TTL + 死信队列实现支付超时，另有扫表兜底
 - 库存对账任务：Redis 库存高于数据库时单向修正，优先保证不超卖
@@ -220,12 +220,14 @@ sequenceDiagram
 | 200 | 200 | 200 | 0 | 547 | 79ms | 180ms | 否 |
 | 300 | 200 | 200 | 100 | 818 | 66ms | 161ms | 否 |
 | 500 | 400 | 400 | 100 | 966 | 67ms | 168ms | 否 |
+| 1000 | 800 | 800 | 200 | 244~337 | 803ms | 943ms | 否 |
 | 300（冷启动首跑） | 200 | 200 | 100 | **178** | **1151ms** | 1642ms | 否 |
 
-两个值得在面试里讲的结论：
+三个值得在面试里讲的结论：
 
 1. **冷启动首跑只有预热后的 1/4.6**（178 vs 818 QPS）。不标注冷启动的漂亮数字没有意义。
-2. **瓶颈在压测客户端**（Python GIL + 每请求短连接 + 与同机抢 CPU），不在服务端：并发从 50 涨到 500，P50 稳定在 67~113ms。
+2. **瓶颈在压测客户端**（Python GIL + 每请求短连接 + 与同机抢 CPU），不在服务端：并发从 50 涨到 500，P50 稳定在 67~113ms；加到 1000 线程 QPS 反而掉到 244，是施压端先饱和。
+3. 1000 并发 / 800 张票，**零超卖**，最终订单数与库存严格一致。
 
 完整方法、口径与局限见 [`docs/loadtest.md`](docs/loadtest.md)。
 
@@ -238,6 +240,7 @@ sequenceDiagram
 | `chengtan_seckill_total{result}` | counter | 抢票结果：`success` / `sold_out` / `limit` / `not_on_sale` / `ended` / `not_init` / `id_dup` / `duplicate` |
 | `chengtan_order_success_total` | counter | 消费端成功创建的订单数 |
 | `chengtan_ticket_verify_total{result}` | counter | 核销结果：`ok` / `idempotent` |
+| `chengtan_outbox_dead_total` | counter | 本地消息表重试耗尽条数，**应配告警** |
 
 压测 20 张票 / 30 并发后的真实采样：
 
@@ -248,6 +251,18 @@ chengtan_order_success_total 20.0
 ```
 
 > 踩坑记录：指标最初叫 `chengtan_order_created_total`，被 Micrometer 规范化成 `chengtan_order_total` —— 因为 `_created` 是 Prometheus 的保留后缀，会被裁掉。
+
+### 7.4 故障演练（真的把组件打死过）
+
+完整记录见 [`docs/failure-drill.md`](docs/failure-drill.md)，每条都有注入命令、观测数据和恢复结果。
+
+| 场景 | 注入方式 | 结果 | 是否暴露问题 |
+|---|---|---|---|
+| 消费端停机 | 关闭 listener 容器 | 30 条积压，恢复后 30 单全部落库，不丢不重 | 否 |
+| RabbitMQ 宕机 | `rabbitmqctl stop` | 接口仍成功、消息进本地消息表 | **是：重试 5 次后进入终态，恢复后不再补投** |
+| 改签写库失败 | MySQL 触发器 | 订单/票/两场次库存/Redis 全部回滚，对照组正常 | 否 |
+
+演练挖出的缺陷已经修掉：重试上限 5 → 20（覆盖约 15 分钟），耗尽打 ERROR + 指标 `chengtan_outbox_dead_total`，并提供 `POST /api/admin/outbox/replay` 重放。修复后实测：MQ 恢复 32 秒自动补投完成；超窗口的死信调重放接口 2 秒内补投 10 单。
 
 ## 8. 本地启动
 
@@ -346,7 +361,9 @@ src/main/java/com/chengtan
 - 短信验证码打印日志，未接短信服务
 - 候补通知只做站内状态，未接短信 / 推送
 - 单库单表，未分库分表；当前定位是演示与面试项目
-- 压测为单机短连接、客户端与服务端同机，**不代表集群能力**；未做混沌演练
+- 压测为单机短连接、客户端与服务端同机，**不代表集群能力**
+- **Redis 宕机未做降级**：缓存层挂掉会直接影响抢票与查询，目前没有"只读走 DB"的兜底
+- 多实例只在设计上支持（Outbox 锁、消费幂等），未真的起两个进程验证
 - 前端是 Vue 2 + 原生 CSS，未做工程化构建
 
 ## 11. 面试可以展开的 7 个问题
