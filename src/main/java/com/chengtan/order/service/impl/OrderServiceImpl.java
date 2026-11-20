@@ -16,6 +16,7 @@ import com.chengtan.common.enums.OrderStatus;
 import com.chengtan.common.enums.TicketStatus;
 import com.chengtan.common.enums.WaitlistStatus;
 import com.chengtan.common.lock.RedisLock;
+import com.chengtan.metrics.TicketMetrics;
 import com.chengtan.mq.MqNames;
 import com.chengtan.mq.OrderCreateMessage;
 import com.chengtan.mq.OrderProducer;
@@ -117,6 +118,7 @@ public class OrderServiceImpl implements OrderService {
     private final RescheduleMapper rescheduleMapper;
     private final RedisLock redisLock;
     private final TransactionTemplate transactionTemplate;
+    private final TicketMetrics metrics;
 
     @Value("${app.seckill.order-timeout-seconds:900}")
     private long orderTimeoutSeconds;
@@ -166,6 +168,7 @@ public class OrderServiceImpl implements OrderService {
         Long result = redis.execute(SECKILL_SCRIPT, keys, args.toArray());
         int code = result == null ? -1 : result.intValue();
         if (code != 0) {
+            metrics.seckill(metricLabel(code));
             throw mapSeckillError(code);
         }
 
@@ -193,6 +196,7 @@ public class OrderServiceImpl implements OrderService {
             if (sent) {
                 markOutboxSent(message.getMessageId());
             }
+            metrics.seckill("success");
             return new CreateOrderVO(orderNo, "CREATING");
         } catch (BizException e) {
             rollbackRedis(sessionId, userId, quantity, attendeeIds);
@@ -202,6 +206,19 @@ public class OrderServiceImpl implements OrderService {
             rollbackRedis(sessionId, userId, quantity, attendeeIds);
             throw new BizException(ErrorCode.SYSTEM_ERROR, "下单失败，请重试");
         }
+    }
+
+    private String metricLabel(int code) {
+        return switch (code) {
+            case 1 -> "sold_out";
+            case 2 -> "limit";
+            case 3 -> "not_on_sale";
+            case 4 -> "not_started";
+            case 5 -> "ended";
+            case 6 -> "not_init";
+            case 7 -> "id_dup";
+            default -> "error";
+        };
     }
 
     private BizException mapSeckillError(int code) {
@@ -317,6 +334,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         afterCommit(() -> publishTimeout(message));
+        metrics.orderCreated();
         return CreateHandleResult.SUCCESS;
     }
 

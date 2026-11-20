@@ -35,6 +35,7 @@
 - TTL + 死信队列实现支付超时，另有扫表兜底
 - 库存对账任务：Redis 库存高于数据库时单向修正，优先保证不超卖
 - 统一返回结构、业务错误码、全局异常、Swagger、Actuator
+- Micrometer 业务指标：抢票结果、订单创建、核销结果，`/actuator/prometheus` 直接可抓
 
 ## 2. 技术栈
 
@@ -47,6 +48,7 @@
 | 缓存 | Redis + Lettuce |
 | 消息队列 | RabbitMQ 3.13.7（Erlang 26） |
 | 接口文档 | springdoc-openapi 2.8.9 |
+| 可观测 | Micrometer + Prometheus 指标 + Actuator 健康检查 |
 | 工具 | Hutool、Lombok |
 | 前端 | Vue 2.5 + Axios + 原生 CSS（无构建步骤） |
 
@@ -224,6 +226,26 @@ sequenceDiagram
 2. **瓶颈在压测客户端**（Python GIL + 每请求短连接 + 与同机抢 CPU），不在服务端：并发从 50 涨到 500，P50 稳定在 67~113ms。
 
 完整方法、口径与局限见 [`docs/loadtest.md`](docs/loadtest.md)。
+
+### 7.3 可观测性
+
+`/actuator/prometheus` 暴露三类业务指标（只做结果计数，不把 userId / sessionId 放进 tag，避免高基数）：
+
+| 指标 | 类型 | 说明 |
+|---|---|---|
+| `chengtan_seckill_total{result}` | counter | 抢票结果：`success` / `sold_out` / `limit` / `not_on_sale` / `ended` / `not_init` / `id_dup` |
+| `chengtan_order_success_total` | counter | 消费端成功创建的订单数 |
+| `chengtan_ticket_verify_total{result}` | counter | 核销结果：`ok` / `idempotent` |
+
+压测 20 张票 / 30 并发后的真实采样：
+
+```
+chengtan_seckill_total{result="success"} 20.0
+chengtan_seckill_total{result="sold_out"} 10.0
+chengtan_order_success_total 20.0
+```
+
+> 踩坑记录：指标最初叫 `chengtan_order_created_total`，被 Micrometer 规范化成 `chengtan_order_total` —— 因为 `_created` 是 Prometheus 的保留后缀，会被裁掉。
 
 ## 8. 本地启动
 

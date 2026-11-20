@@ -8,6 +8,7 @@ import com.chengtan.common.BizException;
 import com.chengtan.common.ErrorCode;
 import com.chengtan.common.enums.OrderStatus;
 import com.chengtan.common.enums.TicketStatus;
+import com.chengtan.metrics.TicketMetrics;
 import com.chengtan.order.entity.TicketOrder;
 import com.chengtan.order.mapper.TicketOrderMapper;
 import com.chengtan.ticket.entity.Ticket;
@@ -33,6 +34,7 @@ public class VerifyServiceImpl implements VerifyService {
     private final TicketMapper ticketMapper;
     private final TicketOrderMapper orderMapper;
     private final VerifyLogMapper verifyLogMapper;
+    private final TicketMetrics metrics;
 
     @Override
     @Transactional
@@ -103,6 +105,7 @@ public class VerifyServiceImpl implements VerifyService {
     }
 
     private VerifyResultVO result(Ticket ticket, boolean idempotent) {
+        metrics.verify(idempotent ? "idempotent" : "ok");
         return new VerifyResultVO(ticket.getTicketNo(), ticket.getOrderNo(),
                 ticket.getVerifyTime(), idempotent);
     }
