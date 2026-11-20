@@ -1,5 +1,7 @@
 # 城探票务（chengtan-ticket）
 
+[![CI](https://github.com/Bulibuli-888/chengtan/actions/workflows/ci.yml/badge.svg)](https://github.com/Bulibuli-888/chengtan/actions/workflows/ci.yml)
+
 面向城市文旅场馆的**分时段预约票务系统**，覆盖「选场次 → 实名抢票 → 支付 → 核销 / 退款 → 售罄候补 → 跨场次改签」全链路。
 
 项目的核心不是 CRUD，而是**场次级库存、订单 / 票双状态机、库存与消息的最终一致性**。
