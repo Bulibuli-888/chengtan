@@ -1,0 +1,21 @@
+# 集成测试专用配置
+# 1. 关闭 MQ 消费者容器，测试里直接调用 Service，避免异步时序不确定
+# 2. 关闭所有定时任务，避免兜底任务在测试过程中改数据
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false
+
+app:
+  jobs:
+    enabled: false
+  reconcile:
+    enabled: false
+  security:
+    id-card-salt: chengtan-test-salt
+
+logging:
+  level:
+    root: warn
+    com.chengtan: info

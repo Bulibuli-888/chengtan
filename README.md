@@ -187,6 +187,23 @@ sequenceDiagram
 
 > 旧版 JMeter 报告已删除（口径与当前实现不一致）。本轮只做正确性回归，**没有虚构 QPS 数字**；压测脚本与数据在 `docs/` 中补充。
 
+### 7.1 自动化测试：核心不变量
+
+`mvn test` 共 17 个用例，其中 `TicketingInvariantTest` 跑的是**真实 MySQL + Redis**，不是 mock：
+
+| 用例 | 断言的不变量 | 验证方式 |
+|---|---|---|
+| 100 并发抢 20 张 | 不超卖、不少卖 | 成功下单数 = 20，订单数 = 票数 = 20，DB `sold` = 20，Redis 库存 = 0 |
+| 同一条消息并发投递 8 次 | 只生成 1 个订单 | 8 个线程同时 `handleCreateMessage`，`SUCCESS` 恰好 1 次，库存只扣 1 |
+| 未支付超时取消 | 库存与限购计数双回补 | 订单 `40`、票 `40`、DB `sold=0`、Redis 库存回到 3、证件占用释放 |
+| 已支付按票退款 | 状态收敛且可再购 | 订单 `50`、票 `30`、库存回补、证件集合移除 |
+| 同一 requestId 重复核销 | 幂等一次 | 第一次 `idempotent=false`，第二次 `true`，`ct_verify_log` 只有 1 条 |
+| 同证件重复购票 | 一证一票 | 第二次被 Lua 拦截并提示证件重复，库存不被二次扣减 |
+
+测试通过 `@MockitoBean` 替换 MQ 生产者，避免测试消息被正在运行的实例消费；`application-test.yaml` 关闭全部定时任务与消费者容器，保证断言确定性。
+
+> 并发用例第一次跑是失败的：线程池只有 32 个线程却要求 100 个任务同时就绪，直接卡死。这类问题只有真的跑并发才会暴露，也是这个项目里最值得讲的一段。
+
 ## 8. 本地启动
 
 ### 环境要求
@@ -247,6 +264,15 @@ mvn spring-boot:run
 - Swagger UI：`http://localhost:8081/swagger-ui.html`
 - OpenAPI JSON：`http://localhost:8081/v3/api-docs`
 - 健康检查：`http://localhost:8081/actuator/health`
+
+### 常用开关
+
+| 配置 | 默认 | 作用 |
+|---|---|---|
+| `app.jobs.enabled` | `true` | 定时任务总开关（Outbox Relay / 超时兜底 / 候补过期），测试与单机调试时可关闭 |
+| `app.reconcile.enabled` | `true` | 库存对账任务开关 |
+| `app.seckill.per-user-limit` | `3` | 每场次每人限购张数 |
+| `app.seckill.order-timeout-seconds` | `900` | 未支付订单超时时间（秒） |
 
 ## 9. 目录结构
 

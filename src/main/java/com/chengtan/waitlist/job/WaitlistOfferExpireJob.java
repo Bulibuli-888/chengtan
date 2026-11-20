@@ -3,6 +3,7 @@ package com.chengtan.waitlist.job;
 import com.chengtan.waitlist.service.WaitlistService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "app.jobs.enabled", havingValue = "true", matchIfMissing = true)
 public class WaitlistOfferExpireJob {
 
     private final WaitlistService waitlistService;

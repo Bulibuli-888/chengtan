@@ -53,6 +53,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -263,7 +264,13 @@ public class OrderServiceImpl implements OrderService {
         order.setExpireTime(now.plusSeconds(orderTimeoutSeconds));
         order.setCreateTime(now);
         order.setUpdateTime(now);
-        orderMapper.insert(order);
+        try {
+            orderMapper.insert(order);
+        } catch (DuplicateKeyException e) {
+            // 并发重复投递：另一个消费者已经插入同一订单号，唯一索引兜底，直接当作已存在
+            log.info("订单已存在（并发重复投递）, orderNo={}", message.getOrderNo());
+            return CreateHandleResult.ALREADY_EXISTS;
+        }
 
         int updated = sessionMapper.update(null, new LambdaUpdateWrapper<VenueSession>()
                 .eq(VenueSession::getId, message.getSessionId())

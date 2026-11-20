@@ -6,6 +6,7 @@ import com.chengtan.order.mapper.OrderOutboxMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "app.jobs.enabled", havingValue = "true", matchIfMissing = true)
 public class OrderOutboxRelay {
 
     private final OrderOutboxMapper outboxMapper;
