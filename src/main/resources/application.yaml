@@ -110,7 +110,11 @@ management:
 logging:
   level:
     root: info
-    com.chengtan: debug
+    # 默认 INFO：验证码、订单状态流转等关键日志仍会打印；
+    # 排查 SQL 时把它改成 debug（或设环境变量 LOG_LEVEL=debug）。
+    # 注意别长时间开 debug：Outbox Relay 每秒扫一次库，SQL 会把控制台刷满。
+    com.chengtan: ${LOG_LEVEL:info}
+    com.chengtan.order.mapper: ${SQL_LOG_LEVEL:warn}
   pattern:
     console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
 
