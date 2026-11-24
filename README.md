@@ -331,6 +331,7 @@ mvn spring-boot:run
 |---|---|---|
 | `app.jobs.enabled` | `true` | 定时任务总开关（Outbox Relay / 超时兜底 / 候补过期），测试与单机调试时可关闭 |
 | `app.reconcile.enabled` | `true` | 库存对账任务开关 |
+| `app.demo.auto-schedule` | `true` | 演示用：启动与每天凌晨自动补齐未来 7 天场次，避免演示列表变空；上线应关闭 |
 | `app.seckill.per-user-limit` | `3` | 每场次每人限购张数 |
 | `app.seckill.order-timeout-seconds` | `900` | 未支付订单超时时间（秒） |
 

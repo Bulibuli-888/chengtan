@@ -121,6 +121,12 @@ logging:
 app:
   storage:
     upload-dir: ${UPLOAD_DIR:./imgs/}
+  # 演示数据滚动排期：启动时 + 每天凌晨补齐「今天起 N 天」的场次，避免演示列表变空。
+  # 真实业务场次由运营排期，上线请设为 false。
+  demo:
+    auto-schedule: true
+    schedule-days: 7
+    schedule-cron: "0 10 0 * * ?"
   seckill:
     order-timeout-seconds: 900
     waitlist-offer-seconds: 600

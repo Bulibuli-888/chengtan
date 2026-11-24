@@ -43,3 +43,7 @@ imgs/
 
 ### WorkBuddy 本地工作记录 ###
 .workbuddy/
+
+### 本地产物 ###
+logs/
+output/

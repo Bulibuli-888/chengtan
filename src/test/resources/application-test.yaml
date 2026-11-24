@@ -12,6 +12,8 @@ app:
     enabled: false
   reconcile:
     enabled: false
+  demo:
+    auto-schedule: false
   security:
     id-card-salt: chengtan-test-salt
 
